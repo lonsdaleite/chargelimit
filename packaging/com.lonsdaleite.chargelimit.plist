@@ -6,7 +6,7 @@
 	<string>com.lonsdaleite.chargelimit</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>/usr/libexec/chargelimitd</string>
+		<string>@PREFIX@/usr/libexec/chargelimitd</string>
 	</array>
 	<key>RunAtLoad</key>
 	<true/>

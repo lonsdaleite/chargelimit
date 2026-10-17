@@ -22,11 +22,17 @@ with a 500 mA limit, 0 A with 0. `IOAccessoryManagerRestoreUSBCurrentLimitBase` 
 negotiated with the charger. The setters take the connection from `IOServiceOpen`, not the service itself;
 called on the service they fail with `kIOReturnBadArgument`.
 
+On iOS 15 the kernel refuses `IOServiceOpen` on the port manager (`kIOReturnNotPermitted`) to any process but
+`accessoryd`, root or not. The rootless package therefore adds `ChargeLimitHelper.dylib`, loaded into
+`accessoryd` only: the daemon falls back to it when its own `IOServiceOpen` is refused, posts
+`com.lonsdaleite.chargelimit.port.{cut,restore}` and reads the result from the notify state of
+`com.lonsdaleite.chargelimit.port.result`. `accessoryd` runs on demand, so when the helper does not answer the
+daemon starts it with `launchctl kickstart` and asks again.
+
 ## Devices
 
-- iPad mini 2, iOS 12.5.8, rootful (Amethyst): works.
-- iOS 15 (iPad Air 2, Dopamine): does not work, the kernel refuses `IOServiceOpen` on the port manager
-  (`kIOReturnNotPermitted`). Not packaged for rootless.
+- iPad mini 2, iOS 12.5.8, rootful (Amethyst): works directly.
+- iPad Air 2, iOS 15.8, rootless (Dopamine, ElleKit): works through the helper in `accessoryd`.
 - Other devices and iOS versions are untested.
 
 ## Build
@@ -34,11 +40,13 @@ called on the service they fail with `kIOReturnBadArgument`.
 ```sh
 brew install ldid dpkg
 make sdk     # downloads the iOS 9.3 SDK into ~/theos/sdks (see scripts/fetch-sdk.sh)
-make deb     # build/com.lonsdaleite.chargelimit_<version>_iphoneos-arm.deb
+make deb             # build/rootful/…_iphoneos-arm.deb: armv7 + arm64
+make deb ROOTLESS=1  # build/rootless/…_iphoneos-arm64.deb: everything under /var/jb, plus the accessoryd helper
 ```
 
 Install with `dpkg -i`; the post-install script loads the daemon (`/Library/LaunchDaemons/com.lonsdaleite.chargelimit.plist`,
-binary `/usr/libexec/chargelimitd`). Reopen Settings to see the page (`/Library/PreferenceBundles/ChargeLimit.bundle`,
+binary `/usr/libexec/chargelimitd`, both under `/var/jb` on rootless) and, on rootless, restarts `accessoryd` so it
+loads the helper. Reopen Settings to see the page (`/Library/PreferenceBundles/ChargeLimit.bundle`,
 controller `src/ChargeLimitController.m`). The icon is drawn by `scripts/make-icon.py`.
 
 ## How the daemon works

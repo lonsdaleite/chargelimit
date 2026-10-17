@@ -1,7 +1,7 @@
 Package: @PACKAGE@
 Name: Charge Limit
 Version: @VERSION@
-Architecture: iphoneos-arm
+Architecture: @DEB_ARCH@
 Description: Keeps the battery between two levels by cutting the Lightning port current from the charger.
 Maintainer: lonsdaleite
 Author: lonsdaleite

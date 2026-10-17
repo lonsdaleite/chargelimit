@@ -8,6 +8,10 @@
 #include <mach/mach.h>
 #include <notify.h>
 #include <signal.h>
+#include <spawn.h>
+#include <sys/wait.h>
+
+#include "Port.h"
 
 typedef mach_port_t io_object_t;
 typedef io_object_t io_service_t;
@@ -83,16 +87,58 @@ static long PortLimit(void) {
     return IOAccessoryManagerGetUSBCurrentLimitBase(PortService(), &limit) ? -1 : (long)limit;
 }
 
-// charge: NO cuts the port current to 0, YES restores the system's limit.
+#ifndef JB_ROOT
+#define JB_ROOT ""
+#endif
+
+// accessoryd runs on demand; a request posted while it is not running is lost.
+static void StartAccessoryd(void) {
+    extern char **environ;
+    pid_t pid;
+    char *argv[] = {"launchctl", "kickstart", "system/com.apple.accessoryd", NULL};
+    if (posix_spawn(&pid, JB_ROOT "/usr/bin/launchctl", NULL, NULL, argv, environ) == 0) {
+        waitpid(pid, NULL, 0);
+    }
+}
+
+// Asks the helper in accessoryd; its kern_return_t, or kIOReturnNotResponding when it does not answer.
+static kern_return_t SetChargingViaAccessoryd(BOOL charge) {
+    int token;
+    notify_register_check(PORT_RESULT, &token);
+    uint64_t before = 0, now = 0;
+    for (int attempt = 0; attempt < 2; attempt++) {
+        notify_get_state(token, &before);
+        notify_post(charge ? PORT_RESTORE : PORT_CUT);
+        for (int i = 0; i < 20; i++) {
+            usleep(100000);
+            notify_get_state(token, &now);
+            if (now >> 32 != before >> 32) {
+                notify_cancel(token);
+                return (kern_return_t)(uint32_t)now;
+            }
+        }
+        Log(@"no answer from accessoryd, starting it");
+        StartAccessoryd();
+        sleep(2);
+    }
+    notify_cancel(token);
+    return (kern_return_t)0xe00002ed; // kIOReturnNotResponding
+}
+
+// charge: NO cuts the port current to 0, YES restores the system's limit. Done directly when this process may open
+// the port manager's user client (iOS 12), through the helper in accessoryd otherwise (iOS 15).
 static void SetCharging(BOOL charge) {
     io_connect_t connect = 0;
     kern_return_t kr = IOServiceOpen(PortService(), mach_task_self(), 0, &connect);
-    if (kr) {
+    if (kr == (kern_return_t)0xe00002e2) { // kIOReturnNotPermitted
+        kr = SetChargingViaAccessoryd(charge);
+    } else if (kr) {
         Log(@"IOServiceOpen failed: 0x%x", kr);
         return;
+    } else {
+        kr = charge ? IOAccessoryManagerRestoreUSBCurrentLimitBase(connect) : IOAccessoryManagerSetUSBCurrentLimitBase(connect, 0);
+        IOServiceClose(connect);
     }
-    kr = charge ? IOAccessoryManagerRestoreUSBCurrentLimitBase(connect) : IOAccessoryManagerSetUSBCurrentLimitBase(connect, 0);
-    IOServiceClose(connect);
     Log(@"%@ at %d%%: kr 0x%x, port limit now %ld mA", charge ? @"charge" : @"stop", BatteryLevel(), kr, PortLimit());
 }
 
