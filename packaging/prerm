@@ -1,0 +1,5 @@
+#!/bin/sh
+# launchctl unload kills the daemon without SIGTERM, so charging is restored here.
+launchctl unload /Library/LaunchDaemons/com.lonsdaleite.chargelimit.plist 2>/dev/null
+/usr/libexec/chargelimitd restore
+exit 0
